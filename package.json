@@ -1,7 +1,7 @@
 {
-  "name": "ally-custom-service",
-  "version": "0.0.0",
-  "description": "Starter kit to create an Ally driver for an OAuth2 service",
+  "name": "adonis-ally-keycloak",
+  "version": "1.1.0",
+  "description": "A Keycloak driver of AdonisJS Ally",
   "main": "index.js",
   "type": "module",
   "files": [
@@ -10,6 +10,7 @@
     "build/src"
   ],
   "scripts": {
+    "clean": "rm -r build",
     "lint": "eslint . --ext=.ts",
     "format": "prettier --write .",
     "typecheck": "tsc --noEmit",
@@ -19,9 +20,11 @@
   "keywords": [
     "social-auth",
     "adonisjs-ally",
-    "adonisjs"
+    "adonisjs",
+    "keycloak",
+    "adonis-ally-keycloak"
   ],
-  "author": "",
+  "author": "Marcílio Santos <@jrsmarcilio>",
   "license": "MIT",
   "devDependencies": {
     "@adonisjs/ally": "^5.0.0-7",
@@ -40,5 +43,20 @@
   "eslintConfig": {
     "extends": "@adonisjs/eslint-config/package"
   },
-  "prettier": "@adonisjs/prettier-config"
+  "prettier": "@adonisjs/prettier-config",
+  "repository": {
+    "type": "git",
+    "url": "git+ssh://git@github.com/jrsmarcilio/adonis-ally-keycloak.git"
+  },
+  "bugs": {
+    "url": "https://github.com/jrsmacilio/adonis-ally-keycloak/issues"
+  },
+  "adonisjs": {
+    "types": "adonis-ally-keycloak",
+    "providers": "adonis-ally-keycloak"
+  },
+  "engines": {
+    "node": ">=20.11.1",
+    "npm": ">=10.2.4"
+  }
 }

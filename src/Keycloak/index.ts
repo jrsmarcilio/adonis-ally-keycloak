@@ -10,13 +10,24 @@
 
 /**
 |--------------------------------------------------------------------------
- *  Search keyword "YourDriver" and replace it with a meaningful name
+ *  Search keyword "Keycloak" and replace it with a meaningful name
 |--------------------------------------------------------------------------
  */
 
 import { Oauth2Driver } from '@adonisjs/ally'
-import type { HttpContext } from '@adonisjs/core/http'
 import type { AllyDriverContract, AllyUserContract, ApiRequestContract } from '@adonisjs/ally/types'
+import type { HttpContext } from '@adonisjs/core/http'
+
+/**
+ * Define the callback function type. It is used to pre-configure the
+ * request before making the actual API request.
+ */
+type Callback = (request: ApiRequestContract) => void
+
+type KeycloakUserContract = AllyUserContract<KeycloakAccessToken> & {
+  lastName: string
+  firstName: string
+}
 
 /**
  *
@@ -24,7 +35,7 @@ import type { AllyDriverContract, AllyUserContract, ApiRequestContract } from '@
  * token must have "token" and "type" properties and you may
  * define additional properties (if needed)
  */
-export type YourDriverAccessToken = {
+export type KeycloakAccessToken = {
   token: string
   type: 'bearer'
 }
@@ -32,12 +43,15 @@ export type YourDriverAccessToken = {
 /**
  * Scopes accepted by the driver implementation.
  */
-export type YourDriverScopes = string
+export type KeycloakScopes = 'openid profile'
 
 /**
  * The configuration accepted by the driver implementation.
  */
-export type YourDriverConfig = {
+export type KeycloakConfig = {
+  driver: 'keycloak'
+  keycloakUrl?: string
+  realm?: string
   clientId: string
   clientSecret: string
   callbackUrl: string
@@ -50,9 +64,9 @@ export type YourDriverConfig = {
  * Driver implementation. It is mostly configuration driven except the API call
  * to get user info.
  */
-export class YourDriver
-  extends Oauth2Driver<YourDriverAccessToken, YourDriverScopes>
-  implements AllyDriverContract<YourDriverAccessToken, YourDriverScopes>
+export class KeycloakDriver
+  extends Oauth2Driver<KeycloakAccessToken, KeycloakScopes>
+  implements AllyDriverContract<KeycloakAccessToken, KeycloakScopes>
 {
   /**
    * The URL for the redirect request. The user will be redirected on this page
@@ -95,7 +109,7 @@ export class YourDriver
    * approach is to prefix the oauth provider name to `oauth_state` value. For example:
    * For example: "facebook_oauth_state"
    */
-  protected stateCookieName = 'YourDriver_oauth_state'
+  protected stateCookieName = 'keycloak_oauth_state'
 
   /**
    * Parameter name to be used for sending and receiving the state from.
@@ -117,9 +131,23 @@ export class YourDriver
 
   constructor(
     ctx: HttpContext,
-    public config: YourDriverConfig
+    public config: KeycloakConfig
   ) {
     super(ctx, config)
+
+    this.config = config
+
+    if (!this.config.realm) {
+      throw new Error('Keycloak driver needs the "realm" to be defined')
+    }
+
+    if (!this.config.keycloakUrl) {
+      throw new Error('Keycloak driver needs the "keycloakUrl" to be defined')
+    }
+
+    this.authorizeUrl = this.buildKeycloakUrl('auth')
+    this.accessTokenUrl = this.buildKeycloakUrl('token')
+    this.userInfoUrl = this.buildKeycloakUrl('userinfo')
 
     /**
      * Extremely important to call the following method to clear the
@@ -131,11 +159,52 @@ export class YourDriver
   }
 
   /**
+   * Get authenticated request by passing the access token
+   */
+  protected getAuthenticatedRequest(url: string, token: string) {
+    const request = this.httpClient(url)
+    request.header('Authorization', `Bearer ${token}`)
+    request.header('Accept', 'application/json')
+    request.parseAs('json')
+    return request
+  }
+
+  /**
+   * Get user info by passing the access token
+   */
+  protected async getUserInfo(token: string, callback?: Callback): Promise<KeycloakUserContract> {
+    const request = this.getAuthenticatedRequest(this.config.userInfoUrl ?? this.userInfoUrl, token)
+
+    /**
+     * Allow end user to configure the request. This should be called after your custom
+     * configuration, so that the user can override them (if needed)
+     */
+    if (typeof callback === 'function') {
+      callback(request)
+    }
+
+    const user = await request.get()
+
+    return {
+      id: user.sub,
+      nickName: user.preferred_username,
+      lastName: user.family_name,
+      firstName: user.given_name,
+      name: user.name,
+      email: user.email,
+      avatarUrl: null,
+      emailVerificationState: user.email_verified ? ('verified' as const) : ('unverified' as const),
+      original: user,
+      token: { type: 'bearer', token: token },
+    }
+  }
+
+  /**
    * Optionally configure the authorization redirect request. The actual request
    * is made by the base implementation of "Oauth2" driver and this is a
    * hook to pre-configure the request.
    */
-  // protected configureRedirectRequest(request: RedirectRequest<YourDriverScopes>) {}
+  // protected configureRedirectRequest(request: RedirectRequest<KeycloakScopes>) {}
 
   /**
    * Optionally configure the access token request. The actual request is made by
@@ -154,47 +223,31 @@ export class YourDriver
 
   /**
    * Get the user details by query the provider API. This method must return
-   * the access token and the user details both. Checkout the google
-   * implementation for same.
-   *
-   * https://github.com/adonisjs/ally/blob/develop/src/Drivers/Google/index.ts#L191-L199
+   * the access token and the user details both.
    */
-  async user(
-    callback?: (request: ApiRequestContract) => void
-  ): Promise<AllyUserContract<YourDriverAccessToken>> {
-    const accessToken = await this.accessToken()
-    const request = this.httpClient(this.config.userInfoUrl || this.userInfoUrl)
+  async user(callback?: Callback): Promise<KeycloakUserContract> {
+    const accessToken = await this.accessToken(callback)
+    const user = await this.getUserInfo(accessToken.token, callback)
 
-    /**
-     * Allow end user to configure the request. This should be called after your custom
-     * configuration, so that the user can override them (if needed)
-     */
-    if (typeof callback === 'function') {
-      callback(request)
-    }
-
-    /**
-     * Write your implementation details here
-     */
+    return user
   }
 
   async userFromToken(
     accessToken: string,
-    callback?: (request: ApiRequestContract) => void
+    callback?: Callback
   ): Promise<AllyUserContract<{ token: string; type: 'bearer' }>> {
-    const request = this.httpClient(this.config.userInfoUrl || this.userInfoUrl)
+    const user = await this.getUserInfo(accessToken, callback)
 
-    /**
-     * Allow end user to configure the request. This should be called after your custom
-     * configuration, so that the user can override them (if needed)
-     */
-    if (typeof callback === 'function') {
-      callback(request)
-    }
+    return user
+  }
 
-    /**
-     * Write your implementation details here
-     */
+  /**
+   * Build the keycloak URL for a given action
+   */
+  private buildKeycloakUrl(action: string): string {
+    return this.config
+      .keycloakUrl!.replace('{{realm}}', this.config.realm!)
+      .replace('{{action}}', action)
   }
 }
 
@@ -202,6 +255,6 @@ export class YourDriver
  * The factory function to reference the driver implementation
  * inside the "config/ally.ts" file.
  */
-export function YourDriverService(config: YourDriverConfig): (ctx: HttpContext) => YourDriver {
-  return (ctx) => new YourDriver(ctx, config)
+export function KeycloakService(config: KeycloakConfig): (ctx: HttpContext) => KeycloakDriver {
+  return (ctx) => new KeycloakDriver(ctx, config)
 }
